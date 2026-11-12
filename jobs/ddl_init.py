@@ -24,6 +24,7 @@ SQL_ORDER = [
     "05_meta.sql",
     "06_app_views.sql",
     "08_legacy_source.sql",
+    "09_reconcile.sql",
 ]
 # 07_evolution.sql 是演进参考脚本，不在建仓时自动执行；
 # 实际加列与历史回填由 jobs/schema_evolution_job.py 幂等完成。

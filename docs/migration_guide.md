@@ -9,10 +9,13 @@
 |---|---|---|
 | ODS | `ods.waybill_event_raw` | 原样保存每次推送，不清洗不合并；分区 `biz_date × source_system` |
 | DWD | `dwd.waybill_event_detail` | 去重(event_id)、乱序排序(event_seq)、重放、维表代理键 |
+| DWD | `dwd.waybill_node_master` | 关键节点主记录：来源优先级定主，多来源观测只标注不合并 |
 | DIM_STG | `dim_stg.*_stg` | 主数据每日快照落地 |
 | DIM | `dim.dim_hub / dim_courier / dim_route / dim_customer` | SCD2 拉链，`[eff_date, exp_date)` |
-| APP | `app.v_*` | 明细层之上的投影视图，含旧宽表兼容视图 |
+| APP | `app.v_*` / `app.waybill_timeliness` | 明细层之上的投影视图；时效统计按口径版本不可变追加 |
 | META | `meta.watermark_log / dq_daily_result / backfill_job_log` | 水位线、质量、补数台账 |
+| META | `meta.waybill_conflict / waybill_review_queue` | 多来源冲突条目（含差异秒数/可能原因）与待核查队列 |
+| META | `meta.adjudication_rule / calibre_version` | 裁决规则（DRAFT→PUBLISHED）与口径版本登记 |
 
 ## 1. 环境准备（回滚点 R0：未动任何生产数据）
 
@@ -118,7 +121,34 @@ spark-submit jobs/backfill_job.py --scope DATE_RANGE \
 - Iceberg 定期维护：`expire_snapshots`（保留 30 天，与补数窗口对齐）、
   `rewrite_data_files` 压实小文件。
 
-## 10. 回滚点汇总
+## 10. 多来源冲突治理与口径版本管理
+
+四个事件来源（扫描枪 SCANNER / 分拨 HUB / 路由 ROUTE / 客服补录 CS，
+LEGACY 为迁移来源）时间与状态互相矛盾时，按以下标准流程治理：
+
+1. **每日自动交叉校验**：DAG 在 `dwd_detail` 后执行 `reconcile_job.py`
+   （也可按运单/区间手动重跑，幂等）。来源优先级与时间容差在
+   `conf/pipeline.conf` 的 `reconcile.*` 调整，调整本身也视为口径变更，需发新版本。
+2. **冲突只进队列不进统计**：OPEN 冲突运单在 `meta.waybill_review_queue`
+   为 PENDING，`timeliness_job.py` 排除这些运单；冲突条目
+   （`meta.waybill_conflict`）含冲突字段、各来源取值、差异秒数、容差与可能原因，
+   全部来源原始事件仍在 ODS/DWD 可追溯。
+3. **人工裁决**（`adjudication_job.py`）：采信某来源（PREFER_SOURCE）或驳回
+   （DISMISS）。裁决只改冲突表，ODS/DWD 原始记录一行不动；裁决后自动重跑
+   该运单 reconcile，队列置 RESOLVED。
+4. **规则沉淀与版本发布**：`--promote-rule` 只生成 DRAFT 规则；
+   `calibre_job.py` 发布下一个 PUBLISHED 口径版本时规则才回填生效版本并开始
+   自动裁决同类冲突。冲突表 `effective_calibre_version` 记录裁决生效边界
+   （规则裁决=规则生效版本；人工裁决为空，语义为裁决时间之后发布的下一个版本），
+   时效作业据此拦截"晚于版本发布的裁决"回灌旧版本；统计只 INSERT 不 UPDATE/DELETE，
+   同版本已出报运单幂等跳过，新运单持续追加，历史报表数字不变。
+5. **冲突消失**：上游数据修正后重跑 reconcile，冲突条件不再成立的 OPEN 条目
+   自动置 INVALID，队列同步 RESOLVED。
+- **回滚点 R6**：治理表独立于 ODS/DWD。误判冲突可重新人工裁决（状态可再次更新）；
+  误发布规则可将 `meta.adjudication_rule.rule_status` 置 DISABLED 并发布新版本；
+  时效结果按版本分区保留，回滚报表只需把消费端指向旧 `calibre_version`。
+
+## 11. 回滚点汇总
 
 | 回滚点 | 阶段 | 回滚动作 |
 |---|---|---|
@@ -128,3 +158,4 @@ spark-submit jobs/backfill_job.py --scope DATE_RANGE \
 | R3 | 双跑期 | 暂停 DAG，连接串指回旧宽表 |
 | R4 | 视图切换 | 指回保留的物理旧宽表 |
 | R5 | 补数/回刷 | Iceberg 快照回滚 或 backup 表换名 |
+| R6 | 冲突治理/口径版本 | 规则置 DISABLED 发新版本；报表指回旧 calibre_version |

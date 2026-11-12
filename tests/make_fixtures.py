@@ -14,6 +14,10 @@
   WB006 关键节点缺失后迟到补报（11-05 才补 11-01 的 ARRIVE，补数重放）
   WB007 未知网点 HUB_GHOST（代理键 -1，DQ 维表未匹配率）
   WB009 网点改名/派件员换片区/客户等级调整的时点关联验证
+  WB010 同一 SIGN 节点四来源(SCANNER/HUB/ROUTE/CS)时间互相矛盾，超容差进冲突队列
+  WB011 签收/拒收终态互斥（SCANNER 报 SIGN、客服补录 REJECT），状态冲突
+  WB012 双来源时间差在容差内（180s <= 300s），不生成冲突，主记录取高优先级来源
+  WB013 路由回调单点离群，用于验证"规则发布后在下一口径版本自动裁决"
 """
 from __future__ import annotations
 
@@ -211,6 +215,105 @@ def build_event_files() -> dict[str, list[dict]]:
            hub_code="HUB_BJ", courier_code="C001",
            customer_code="K001", **common),
     ]
+
+    # ---- WB010 同一 SIGN 节点四来源时间互相矛盾（差异均 >300s 容差）----
+    # 主记录按优先级取 SCANNER 10:00；CS 14:00 偏离最远 -> MANUAL_BACKFILL_LAG
+    f["2026-11-01"] += [
+        ev("EA01", "WB010", "PICKUP", "SCANNER",
+           "2026-11-01 08:00:00", "2026-11-01 08:05:00",
+           origin_hub_code="HUB_SH", hub_code="HUB_SH",
+           courier_code="C001", customer_code="K001", **common),
+    ]
+    f["2026-11-02"] += [
+        ev("EA02", "WB010", "SIGN", "SCANNER",
+           "2026-11-02 10:00:00", "2026-11-02 10:02:00",
+           hub_code="HUB_BJ", courier_code="C002",
+           customer_code="K001", **common),
+        ev("EA03", "WB010", "SIGN", "HUB",
+           "2026-11-02 10:06:00", "2026-11-02 10:10:00",
+           hub_code="HUB_BJ", customer_code="K001", **common),
+        ev("EA04", "WB010", "SIGN", "ROUTE",
+           "2026-11-02 10:30:00", "2026-11-02 10:35:00",
+           hub_code="HUB_BJ", customer_code="K001", **common),
+        ev("EA05", "WB010", "SIGN", "CS",
+           "2026-11-02 14:00:00", "2026-11-02 14:20:00",
+           hub_code="HUB_BJ", customer_code="K001", **common),
+    ]
+
+    # ---- WB011 终态互斥：扫描枪报签收，客服补录拒收 -> 状态冲突 ----
+    f["2026-11-01"] += [
+        ev("EB01", "WB011", "PICKUP", "SCANNER",
+           "2026-11-01 09:00:00", "2026-11-01 09:05:00",
+           origin_hub_code="HUB_SH", hub_code="HUB_SH",
+           courier_code="C001", customer_code="K002", **common),
+    ]
+    f["2026-11-02"] += [
+        ev("EB02", "WB011", "SIGN", "SCANNER",
+           "2026-11-02 11:00:00", "2026-11-02 11:05:00",
+           hub_code="HUB_BJ", courier_code="C002",
+           customer_code="K002", **common),
+        ev("EB03", "WB011", "REJECT", "CS",
+           "2026-11-02 15:00:00", "2026-11-02 15:30:00",
+           hub_code="HUB_BJ", customer_code="K002",
+           exception_code="EX_REJECT", exception_reason="客户拒收，客服补录", **common),
+    ]
+
+    # ---- WB012 双来源 DELIVER 相差 180s，在 300s 容差内：不生成冲突 ----
+    f["2026-11-01"] += [
+        ev("EC01", "WB012", "PICKUP", "SCANNER",
+           "2026-11-01 08:30:00", "2026-11-01 08:35:00",
+           origin_hub_code="HUB_SH", hub_code="HUB_SH",
+           courier_code="C001", customer_code="K001", **common),
+    ]
+    f["2026-11-02"] += [
+        ev("EC02", "WB012", "DELIVER", "SCANNER",
+           "2026-11-02 09:00:00", "2026-11-02 09:02:00",
+           hub_code="HUB_BJ", courier_code="C002",
+           customer_code="K001", **common),
+        ev("EC03", "WB012", "DELIVER", "HUB",
+           "2026-11-02 09:03:00", "2026-11-02 09:05:00",
+           hub_code="HUB_BJ", customer_code="K001", **common),
+        ev("EC04", "WB012", "SIGN", "SCANNER",
+           "2026-11-02 12:00:00", "2026-11-02 12:05:00",
+           hub_code="HUB_BJ", courier_code="C002",
+           customer_code="K001", **common),
+    ]
+
+    # ---- WB013 路由回调单点离群（ARRIVE 晚 3 小时），规则发布前保持 OPEN ----
+    f["2026-11-01"] += [
+        ev("ED01", "WB013", "PICKUP", "SCANNER",
+           "2026-11-01 07:30:00", "2026-11-01 07:35:00",
+           origin_hub_code="HUB_SH", hub_code="HUB_SH",
+           courier_code="C001", customer_code="K002", **common),
+        ev("ED02", "WB013", "ARRIVE", "HUB",
+           "2026-11-01 20:00:00", "2026-11-01 20:10:00",
+           hub_code="HUB_BJ", customer_code="K002", **common),
+        ev("ED03", "WB013", "ARRIVE", "ROUTE",
+           "2026-11-01 23:00:00", "2026-11-01 23:20:00",
+           hub_code="HUB_BJ", customer_code="K002", **common),
+    ]
+    f["2026-11-02"] += [
+        ev("ED04", "WB013", "SIGN", "SCANNER",
+           "2026-11-02 12:00:00", "2026-11-02 12:05:00",
+           hub_code="HUB_BJ", courier_code="C002",
+           customer_code="K002", **common),
+    ]
+
+    # ---- WB014 客服补录滞后场景：用于验证规则发布后【下一口径版本】自动裁决 ----
+    # 首跑时规则尚未发布，冲突为 OPEN；v2 版本发布 RULE_0001 后重跑即自动裁决
+    f["2026-11-05"] += [
+        ev("EE01", "WB014", "PICKUP", "SCANNER",
+           "2026-11-05 08:00:00", "2026-11-05 08:05:00",
+           origin_hub_code="HUB_SH", hub_code="HUB_SH",
+           courier_code="C001", customer_code="K001", **common),
+        ev("EE02", "WB014", "SIGN", "SCANNER",
+           "2026-11-05 12:00:00", "2026-11-05 12:05:00",
+           hub_code="HUB_BJ", courier_code="C002",
+           customer_code="K001", **common),
+        ev("EE03", "WB014", "SIGN", "CS",
+           "2026-11-05 16:00:00", "2026-11-05 16:30:00",
+           hub_code="HUB_BJ", customer_code="K001", **common),
+    ]
     return f
 
 
@@ -345,6 +448,12 @@ dq.threshold.dim_unmatched_rate=0.01
 dq.threshold.partition_latency_minutes=180
 backfill.shadow.suffix=_shadow
 backfill.output.dir={root}/data/backfill
+reconcile.source.priority=SCANNER:10,HUB:20,ROUTE:30,CS:40,LEGACY:90
+reconcile.source.default_priority=100
+reconcile.time.tolerance.seconds=300
+reconcile.key.nodes=PICKUP,DEPART,ARRIVE,TRANSFER,DELIVER,SIGN,REJECT
+reconcile.terminal.nodes=SIGN,REJECT
+reconcile.initial.calibre_version=v2026.11.0
 """
     (root / "conf/pipeline.local.conf").write_text(conf, encoding="utf-8")
     print(f"[fixtures] root={root} 事件落地日={list(event_files)} "

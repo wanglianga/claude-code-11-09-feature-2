@@ -61,10 +61,49 @@ WM_LOG = "ltl.meta.watermark_log"
 DQ_TABLE = "ltl.meta.dq_daily_result"
 BACKFILL_LOG = "ltl.meta.backfill_job_log"
 
+# ---- 多来源可信度 / 冲突裁决 / 口径版本（见 sql/09_reconcile.sql）----
+NODE_MASTER = "ltl.dwd.waybill_node_master"
+CONFLICT_TABLE = "ltl.meta.waybill_conflict"
+REVIEW_QUEUE = "ltl.meta.waybill_review_queue"
+RULE_TABLE = "ltl.meta.adjudication_rule"
+CALIBRE_TABLE = "ltl.meta.calibre_version"
+TIMELINESS_TABLE = "ltl.app.waybill_timeliness"
+# 建仓后的首个口径版本；首次 reconcile 时幂等登记为 PUBLISHED
+INITIAL_CALIBRE_VERSION = "v2026.11.0"
+
 UNMATCHED_SK = -1
 FUTURE_DATE = "9999-12-31"
 EVENT_TYPES = ["PICKUP", "DEPART", "ARRIVE", "TRANSFER",
                "DELIVER", "SIGN", "REJECT", "EXCEPTION", "POD"]
+
+
+def source_priority(conf: dict) -> dict:
+    """解析 reconcile.source.priority（SCANNER:10,HUB:20,...）为 {来源: 优先级}。
+
+    未配置任何条目时回退到内置缺省优先级，保证作业独立可运行。
+    """
+    raw = conf.get("reconcile.source.priority", "").strip()
+    if not raw:
+        return {"SCANNER": 10, "HUB": 20, "ROUTE": 30, "CS": 40, "LEGACY": 90}
+    prio = {}
+    for item in raw.split(","):
+        item = item.strip()
+        if not item or ":" not in item:
+            continue
+        src, rank = item.split(":", 1)
+        prio[src.strip()] = int(rank.strip())
+    return prio
+
+
+def key_nodes(conf: dict) -> list[str]:
+    raw = conf.get("reconcile.key.nodes", "").strip()
+    return [x.strip() for x in raw.split(",") if x.strip()] or [
+        "PICKUP", "DEPART", "ARRIVE", "TRANSFER", "DELIVER", "SIGN", "REJECT"]
+
+
+def terminal_nodes(conf: dict) -> list[str]:
+    raw = conf.get("reconcile.terminal.nodes", "").strip()
+    return [x.strip() for x in raw.split(",") if x.strip()] or ["SIGN", "REJECT"]
 
 
 def load_conf(path: str | None = None) -> dict:

@@ -53,6 +53,18 @@ def run_dq_recheck(**_context) -> None:
         shell=True, check=True)
 
 
+def run_reconcile_recheck(**_context) -> None:
+    # 补数重放会改写 DWD，多来源主记录/冲突/队列必须随之重算：
+    # 按运单补数则只重算该运单，按区间补数则重算整个区间。
+    p = get_current_context()["params"]
+    if p["scope"] == "WAYBILL":
+        args = ["--scope", "WAYBILL", "--waybill-nos", p["waybill_nos"]]
+    else:
+        args = ["--start-date", p["start_date"], "--end-date", p["end_date"]]
+    subprocess.run(spark_submit("reconcile_job.py", *args),
+                   shell=True, check=True)
+
+
 with DAG(
     dag_id="ltl_backfill",
     description="事件仓库补数：按运单号/时间区间重放，影子表对比后受控切换",
@@ -72,5 +84,8 @@ with DAG(
     },
 ) as dag:
     backfill = PythonOperator(task_id="backfill_run", python_callable=run_backfill)
+    # 重放后先重算来源可信度/冲突队列，再做 DQ 复核，保证待核查状态与最新明细一致
+    reconcile_recheck = PythonOperator(task_id="reconcile_recheck",
+                                       python_callable=run_reconcile_recheck)
     dq_recheck = PythonOperator(task_id="dq_recheck", python_callable=run_dq_recheck)
-    backfill >> dq_recheck
+    backfill >> reconcile_recheck >> dq_recheck
