@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# 本地运行产物（仓库与落地数据，不入库）
+runtime/
+data/landing/
+data/backfill/
+metastore_db/
+derby.log
+spark-warehouse/
+
+# 系统
+.DS_Store
+
+# 本地生成配置（由 tests/make_fixtures.py 生成）
+conf/pipeline.local.conf
+# Generated/runtime files excluded from GSB delivery
+node_modules/
+**/node_modules/
+**/.venv/
+**/venv/
+**/.syslibs/
+**/.locallibs/
+**/__pycache__/
+frontend/dist/
+**/dist/
+**/build/
+coverage/
+.env
+!.env.example
+.claude/
+.codex/
+.local/*.tar
+.local/*.tar.gz
+.local/*.tgz
+.local/*.zip
+.local/*.7z
+traces/
+recordings/
+screenshots/
+test-results/
+tmp/
+temp/
+*.jsonl
+*.webm
+*.mp4
+*.har
+*.log
+*.sqlite
+*.db
+*screenshot*.png
+*screenshot*.jpg
+*screenshot*.jpeg
+*screen-capture*.png
+*screen-capture*.jpg
+*recording*.webm
+*recording*.mp4
+*trace*.jsonl

@@ -1,0 +1,35 @@
+-- =====================================================================
+-- 07_evolution.sql  Schema 演进规则与演练（参考脚本，由作业幂等执行）
+--
+-- 注意：Spark 3.5 的 ADD COLUMN 不支持 IF NOT EXISTS，且 Iceberg 1.8 不支持
+-- SQL 列 DEFAULT。因此本文件仅作规则与语句参考；实际执行统一走
+-- jobs/schema_evolution_job.py（存在性检查 + ADD COLUMN + 历史回填，幂等）。
+--
+-- 强制规则：
+--   1. 只加列：新需求一律 ADD COLUMN，禁止 DROP/RENAME/改类型；
+--   2. 加列必须带默认值语义，由两件事保证——
+--        a) 写入作业对新列 coalesce 默认值（新数据不为空）；
+--        b) schema_evolution_job.py 对历史分区 UPDATE 回填默认值（幂等）；
+--   3. 不改类型：类型不够用时新增并列列（weight_kg -> weight_kg_v2），
+--      旧列保留，由视图切换口径；
+--   4. 不删列：废弃列保留并在注释标注 @deprecated，视图层下线即可；
+--   5. 上游新增字段只落在 ODS raw_payload 与新列中，DWD 既有投影不变，
+--      下游视图基于明细层投影，因此既有报表零改动（由 tests 验证）。
+-- =====================================================================
+
+-- 下列语句与 schema_evolution_job.BUILTIN_COLUMNS 一一对应（作业内已做幂等）：
+-- ALTER TABLE ltl.dwd.waybill_event_detail ADD COLUMN appointment_window STRING;
+-- UPDATE ltl.dwd.waybill_event_detail SET appointment_window='NA'
+--   WHERE appointment_window IS NULL;
+-- ALTER TABLE ltl.dwd.waybill_event_detail ADD COLUMN is_cold_chain BOOLEAN;
+-- UPDATE ltl.dwd.waybill_event_detail SET is_cold_chain=false
+--   WHERE is_cold_chain IS NULL;
+-- ALTER TABLE ltl.dwd.waybill_event_detail ADD COLUMN station_code STRING;
+-- ALTER TABLE ltl.dwd.waybill_event_detail ADD COLUMN weight_kg_v2 DECIMAL(12,3);
+-- ALTER TABLE ltl.dim.dim_hub ADD COLUMN cold_storage_capable BOOLEAN;
+
+-- 明年新作业节点（如 STATION_IN）只是 event_type 新枚举，无需加时间列。
+
+-- ---- 禁止项（仅作文档，不会执行）----
+-- ALTER TABLE ltl.dwd.waybill_event_detail DROP COLUMN is_cold_chain;      -- 禁止删列
+-- ALTER TABLE ltl.dwd.waybill_event_detail ALTER COLUMN hub_sk TYPE STRING; -- 禁止改类型

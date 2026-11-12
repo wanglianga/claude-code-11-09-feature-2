@@ -1,0 +1,4 @@
+# Airflow 编排依赖（容器镜像已内置，裸机本地编排时可 pip install -r 本文件）
+# 作业本身只依赖 pyspark（随 Spark 发行版提供），DAG 仅通过 spark-submit 调作业，
+# 因此 Airflow 环境不需要安装 pyspark。
+apache-airflow==2.9.3

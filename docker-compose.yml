@@ -1,0 +1,65 @@
+# =====================================================================
+# 一键启动：docker compose up -d
+#   - ltl-airflow : Airflow standalone，UI http://localhost:8080
+#                   账号见 .env（默认 ltl_admin / ltl_admin_2026）
+#   - 卷 warehouse 持久化 Iceberg 表；landing 放上游推送文件
+# 无界面无常驻业务服务：Airflow 仅为编排器，业务交付物是 SQL/作业/脚本本身。
+# =====================================================================
+services:
+  ltl-airflow:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: ltl-event-warehouse:1.0
+    container_name: ltl-airflow
+    ports:
+      - "8080:8080"   # Airflow UI
+      - "4040:4040"   # Spark UI（作业运行期）
+    environment:
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_USER:-ltl_admin}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_PASSWORD:-ltl_admin_2026}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/ltl/orchestration/dags
+      SPARK_MASTER: local[2]
+      LTL_HOME: /opt/ltl
+      PIPELINE_CONF: /opt/ltl/conf/pipeline.conf
+      TZ: Asia/Shanghai
+    volumes:
+      - ltl_warehouse:/opt/warehouse
+      - ./data:/opt/data
+      - ./conf:/opt/ltl/conf
+      - ./jobs:/opt/ltl/jobs
+      - ./sql:/opt/ltl/sql
+      - ./orchestration:/opt/ltl/orchestration
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
+
+  # 一次性建仓/跑作业的便捷服务：
+  #   docker compose run --rm ltl-spark spark-submit /opt/ltl/jobs/ddl_init.py --conf /opt/ltl/conf/pipeline.conf
+  ltl-spark:
+    image: ltl-event-warehouse:1.0
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    profiles: ["tools"]
+    entrypoint: ["/usr/bin/tini", "--", "/entrypoint.sh"]
+    command: ["bash"]
+    environment:
+      PIPELINE_CONF: /opt/ltl/conf/pipeline.conf
+      TZ: Asia/Shanghai
+    volumes:
+      - ltl_warehouse:/opt/warehouse
+      - ./data:/opt/data
+      - ./conf:/opt/ltl/conf
+      - ./jobs:/opt/ltl/jobs
+      - ./sql:/opt/ltl/sql
+    stdin_open: true
+    tty: true
+
+volumes:
+  ltl_warehouse:
